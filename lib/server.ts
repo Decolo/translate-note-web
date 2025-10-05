@@ -4,7 +4,7 @@ import { translateText } from './translator';
 import { supabase } from './supabase';
 
 const translateRouter = router({
-  translate: publicProcedure
+  translate: protectedProcedure
     .input(z.object({
       text: z.string(),
       sourceLang: z.string(),

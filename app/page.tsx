@@ -68,6 +68,12 @@ export default function Home() {
   }, [provider]);
 
   const handleTranslate = async () => {
+    if (!session) {
+      alert('Sign in to translate text.');
+      await sessionQuery.refetch();
+      return;
+    }
+
     if (!sourceText.trim()) return;
 
     try {
@@ -80,6 +86,17 @@ export default function Home() {
 
       setTranslatedText(result.translatedText);
     } catch (error) {
+      const errorWithData =
+        typeof error === 'object' && error !== null && 'data' in error
+          ? (error as { data?: { code?: string } })
+          : null;
+
+      if (errorWithData?.data?.code === 'UNAUTHORIZED') {
+        alert('Sign in to translate text.');
+        await sessionQuery.refetch();
+        return;
+      }
+
       console.error('Translation failed:', error);
       alert(
         error instanceof Error
@@ -342,7 +359,9 @@ export default function Home() {
           <div className="flex gap-4">
             <button
               onClick={handleTranslate}
-              disabled={translateMutation.isPending || !sourceText.trim()}
+              disabled={
+                !session || translateMutation.isPending || !sourceText.trim()
+              }
               className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-300"
             >
               {translateMutation.isPending ? 'Translating...' : 'Translate'}
