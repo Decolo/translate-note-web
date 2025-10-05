@@ -7,6 +7,7 @@ export const supabase = createClient(supabaseUrl, supabaseKey);
 
 export type Translation = {
   id: string;
+  user_id: string;
   source_text: string;
   translated_text: string;
   source_lang: string;

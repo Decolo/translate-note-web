@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { router, publicProcedure } from './trpc';
+import { router, publicProcedure, protectedProcedure } from './trpc';
 import { translateText } from './translator';
 import { supabase } from './supabase';
 
@@ -17,50 +17,64 @@ const translateRouter = router({
 });
 
 const notesRouter = router({
-  getAll: publicProcedure
-    .query(async () => {
-      const { data, error } = await supabase
-        .from('translations')
-        .select('*')
-        .order('created_at', { ascending: false });
+  getAll: protectedProcedure.query(async ({ ctx }) => {
+    const { data, error } = await supabase
+      .from('translations')
+      .select('*')
+      .eq('user_id', ctx.session.user.id)
+      .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      return data;
-    }),
+    if (error) throw error;
+    return data;
+  }),
 
-  create: publicProcedure
+  create: protectedProcedure
     .input(z.object({
       source_text: z.string(),
       translated_text: z.string(),
       source_lang: z.string(),
       target_lang: z.string(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { data, error } = await supabase
         .from('translations')
-        .insert([input])
-        .select();
+        .insert([
+          {
+            ...input,
+            user_id: ctx.session.user.id,
+          },
+        ])
+        .select()
+        .single();
 
       if (error) throw error;
-      return data[0];
+      return data;
     }),
 
-  delete: publicProcedure
+  delete: protectedProcedure
     .input(z.string())
-    .mutation(async ({ input: id }) => {
+    .mutation(async ({ ctx, input: id }) => {
       const { error } = await supabase
         .from('translations')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('user_id', ctx.session.user.id);
 
       if (error) throw error;
       return { success: true };
     }),
 });
 
+const authRouter = router({
+  me: publicProcedure.query(({ ctx }) => ({
+    user: ctx.session?.user ?? null,
+  })),
+});
+
 export const appRouter = router({
   translate: translateRouter,
   notes: notesRouter,
+  auth: authRouter,
 });
 
 export type AppRouter = typeof appRouter;

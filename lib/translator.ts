@@ -87,13 +87,25 @@ async function translateWithGoogleTranslate(
     throw new Error(`Google Translate API error: ${response.statusText}`);
   }
 
-  const data = await response.json();
+  const data: unknown = await response.json();
 
-  if (!data || !data[0] || !data[0][0] || !data[0][0][0]) {
+  if (!Array.isArray(data) || !Array.isArray(data[0])) {
     throw new Error('Invalid response from Google Translate');
   }
 
-  return data[0].map((item: any) => item[0]).filter(Boolean).join('');
+  const segments = (data[0] as unknown[]).flatMap((item) => {
+    if (Array.isArray(item) && typeof item[0] === 'string') {
+      return item[0];
+    }
+
+    return [];
+  });
+
+  if (segments.length === 0) {
+    throw new Error('Invalid response from Google Translate');
+  }
+
+  return segments.join('');
 }
 
 async function translateWithDeepSeek(

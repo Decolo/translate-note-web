@@ -1,7 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { SUPPORTED_LANGUAGES, TRANSLATION_PROVIDERS, TranslationProvider } from '@/lib/translator';
+import { FormEvent, useEffect, useState } from 'react';
+import {
+  SUPPORTED_LANGUAGES,
+  TRANSLATION_PROVIDERS,
+  TranslationProvider,
+} from '@/lib/translator';
 import type { Translation } from '@/lib/supabase';
 import { trpc } from '@/lib/client';
 
@@ -22,12 +26,31 @@ export default function Home() {
   });
   const [provider, setProvider] = useState<TranslationProvider>(() => {
     if (typeof window !== 'undefined') {
-      return (localStorage.getItem('provider') as TranslationProvider) || 'googletranslate';
+      return (
+        (localStorage.getItem('provider') as TranslationProvider) ||
+        'googletranslate'
+      );
     }
     return 'googletranslate';
   });
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
 
-  const { data: notes = [], refetch: refetchNotes } = trpc.notes.getAll.useQuery();
+  const sessionQuery = trpc.auth.me.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const session = sessionQuery.data?.user ?? null;
+
+  const notesQuery = trpc.notes.getAll.useQuery(undefined, {
+    enabled: Boolean(session),
+    retry: false,
+  });
+  const notes: Translation[] = notesQuery.data ?? [];
+
   const translateMutation = trpc.translate.translate.useMutation();
   const createNoteMutation = trpc.notes.create.useMutation();
   const deleteNoteMutation = trpc.notes.delete.useMutation();
@@ -58,11 +81,74 @@ export default function Home() {
       setTranslatedText(result.translatedText);
     } catch (error) {
       console.error('Translation failed:', error);
-      alert(error instanceof Error ? error.message : 'Translation failed. Try another provider.');
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Translation failed. Try another provider.'
+      );
+    }
+  };
+
+  const performLogin = async (email: string, password: string) => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw new Error(data?.error ?? 'Login failed');
+    }
+  };
+
+  const handleAuthSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthError(null);
+    setAuthLoading(true);
+
+    try {
+      if (authMode === 'register') {
+        const registerResponse = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: authEmail, password: authPassword }),
+        });
+
+        if (!registerResponse.ok) {
+          const data = await registerResponse.json().catch(() => null);
+          throw new Error(data?.error ?? 'Registration failed');
+        }
+      }
+
+      await performLogin(authEmail, authPassword);
+      await sessionQuery.refetch();
+      await notesQuery.refetch();
+      setAuthEmail('');
+      setAuthPassword('');
+    } catch (error) {
+      console.error('Auth error:', error);
+      setAuthError(error instanceof Error ? error.message : 'Auth failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } finally {
+      await sessionQuery.refetch();
+      await notesQuery.refetch();
     }
   };
 
   const handleSaveNote = async () => {
+    if (!session) {
+      alert('Sign in to save translations.');
+      return;
+    }
+
     if (!sourceText.trim() || !translatedText.trim()) return;
 
     try {
@@ -73,8 +159,9 @@ export default function Home() {
         target_lang: targetLang,
       });
 
+      setAuthError(null);
       alert('Note saved successfully!');
-      refetchNotes();
+      await notesQuery.refetch();
     } catch (error) {
       console.error('Failed to save note:', error);
       alert('Failed to save note.');
@@ -82,9 +169,14 @@ export default function Home() {
   };
 
   const handleDeleteNote = async (id: string) => {
+    if (!session) {
+      alert('Sign in to manage saved translations.');
+      return;
+    }
+
     try {
       await deleteNoteMutation.mutateAsync(id);
-      refetchNotes();
+      await notesQuery.refetch();
     } catch (error) {
       console.error('Failed to delete note:', error);
     }
@@ -96,6 +188,90 @@ export default function Home() {
         <h1 className="text-4xl font-bold text-center mb-8 text-gray-800">
           Translation App
         </h1>
+
+        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+          {session ? (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <p className="text-sm text-gray-600">Signed in as</p>
+                <p className="font-semibold text-gray-900">{session.email}</p>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="self-start sm:self-auto bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300"
+              >
+                Log out
+              </button>
+            </div>
+          ) : (
+            <form className="space-y-4" onSubmit={handleAuthSubmit}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-gray-800">
+                  {authMode === 'login' ? 'Sign in' : 'Create an account'}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAuthMode((mode) => (mode === 'login' ? 'register' : 'login'))
+                  }
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  {authMode === 'login'
+                    ? 'Need an account? Register'
+                    : 'Already have an account? Sign in'}
+                </button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-sm text-gray-600">Email</span>
+                  <input
+                    type="email"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    required
+                    className="mt-1 w-full rounded-md border px-3 py-2"
+                    placeholder="you@example.com"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm text-gray-600">Password</span>
+                  <input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    minLength={8}
+                    required
+                    className="mt-1 w-full rounded-md border px-3 py-2"
+                    placeholder="Minimum 8 characters"
+                  />
+                </label>
+              </div>
+
+              {authError ? (
+                <p className="text-sm text-red-600">{authError}</p>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  {authMode === 'login'
+                    ? 'Use your credentials to access saved translations.'
+                    : 'Passwords are hashed with bcrypt before storage.'}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 disabled:bg-blue-300"
+              >
+                {authLoading
+                  ? 'Submitting...'
+                  : authMode === 'login'
+                  ? 'Sign in'
+                  : 'Register & Sign in'}
+              </button>
+            </form>
+          )}
+        </div>
 
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
           <div className="mb-4">
@@ -173,10 +349,15 @@ export default function Home() {
             </button>
             <button
               onClick={handleSaveNote}
-              disabled={!sourceText.trim() || !translatedText.trim()}
+              disabled={
+                !session ||
+                !sourceText.trim() ||
+                !translatedText.trim() ||
+                createNoteMutation.isPending
+              }
               className="flex-1 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 disabled:bg-gray-300"
             >
-              Save Note
+              {createNoteMutation.isPending ? 'Saving...' : 'Save Note'}
             </button>
           </div>
         </div>
@@ -185,40 +366,51 @@ export default function Home() {
           <h2 className="text-2xl font-bold mb-4 text-gray-800">
             Saved Translations
           </h2>
-          <div className="space-y-4">
-            {notes.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">
-                No saved translations yet
-              </p>
-            ) : (
-              notes.map((note) => (
+          {!session ? (
+            <p className="text-gray-500 text-center py-8">
+              Sign in to keep a history of your translations.
+            </p>
+          ) : notesQuery.isLoading ? (
+            <p className="text-gray-500 text-center py-8">Loading...</p>
+          ) : notes.length === 0 ? (
+            <p className="text-gray-500 text-center py-8">
+              No saved translations yet
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {notes.map((note) => (
                 <div
                   key={note.id}
                   className="border rounded-md p-4 hover:bg-gray-50"
                 >
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex gap-2 text-sm text-gray-600">
-                      <span className="font-medium">
-                        {note.source_lang.toUpperCase()} → {note.target_lang.toUpperCase()}
-                      </span>
-                      <span>•</span>
-                      <span>
-                        {new Date(note.created_at).toLocaleDateString()}
-                      </span>
+                      <span className="font-semibold">{note.source_lang.toUpperCase()}</span>
+                      <span>→</span>
+                      <span className="font-semibold">{note.target_lang.toUpperCase()}</span>
                     </div>
                     <button
                       onClick={() => handleDeleteNote(note.id)}
-                      className="text-red-600 hover:text-red-800 text-sm"
+                      className="text-sm text-red-600 hover:underline"
                     >
                       Delete
                     </button>
                   </div>
-                  <p className="text-gray-800 mb-1">{note.source_text}</p>
-                  <p className="text-blue-700">→ {note.translated_text}</p>
+
+                  <div className="grid md:grid-cols-2 gap-4 text-gray-800">
+                    <div>
+                      <p className="text-xs text-gray-500">Source</p>
+                      <p>{note.source_text}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500">Translation</p>
+                      <p>{note.translated_text}</p>
+                    </div>
+                  </div>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
