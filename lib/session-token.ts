@@ -17,7 +17,7 @@ function parseCookieHeader(header: string | null): string | null {
 }
 
 export async function getSessionFromCookies(): Promise<SessionWithUser | null> {
-  const store = cookies();
+  const store = await cookies();
   const token = store.get(SESSION_COOKIE_NAME)?.value;
   if (!token) return null;
   return getSessionWithUser(token);

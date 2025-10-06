@@ -56,6 +56,16 @@ export async function createUser(email: string, password: string): Promise<User>
   return data;
 }
 
+export async function getOrCreateUserByEmail(email: string): Promise<User> {
+  const existing = await getUserByEmail(email);
+  if (existing) {
+    return existing;
+  }
+
+  const randomSecret = `oauth-${randomUUID()}-${Date.now()}`;
+  return createUser(email, randomSecret);
+}
+
 export async function getUserByEmail(email: string): Promise<User | null> {
   const { data, error } = await supabase
     .from('users')

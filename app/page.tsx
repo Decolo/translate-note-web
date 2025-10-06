@@ -10,6 +10,29 @@ import {
 import type { Translation } from '@/lib/supabase';
 import { trpc } from '@/lib/client';
 
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  missing_code: 'Missing authorization code from Google. Please try again.',
+  missing_oauth_session:
+    'Your Google sign-in session expired. Start the sign-in flow again.',
+  state_mismatch:
+    'The sign-in attempt could not be verified. Begin a new Google sign-in.',
+  google_auth_failed: 'Unable to sign in with Google right now. Try again shortly.',
+};
+
+function describeOAuthError(code: string) {
+  return (
+    OAUTH_ERROR_MESSAGES[code] ??
+    'Google sign-in failed. Please try again in a moment.'
+  );
+}
+
+function describeOAuthSuccess(code: string) {
+  if (code === 'google') {
+    return 'Signed in with Google successfully.';
+  }
+  return 'Signed in successfully.';
+}
+
 export default function Home() {
   const [sourceText, setSourceText] = useState('');
   const [translatedText, setTranslatedText] = useState('');
@@ -23,6 +46,9 @@ export default function Home() {
   const [authLoading, setAuthLoading] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [authNotice, setAuthNotice] = useState<
+    { type: 'success' | 'error'; message: string } | null
+  >(null);
 
   const openAuthModal = (mode?: 'login' | 'register') => {
     if (mode) {
@@ -79,6 +105,40 @@ export default function Home() {
   const translateMutation = trpc.translate.translate.useMutation();
   const createNoteMutation = trpc.notes.create.useMutation();
   const deleteNoteMutation = trpc.notes.delete.useMutation();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const currentUrl = new URL(window.location.href);
+    const errorCode = currentUrl.searchParams.get('authError');
+    const successCode = currentUrl.searchParams.get('authSuccess');
+    let mutated = false;
+
+    if (errorCode) {
+      const message = describeOAuthError(errorCode);
+      setAuthNotice({ type: 'error', message });
+      setAuthError(message);
+      setAuthMode('login');
+      setIsAuthOpen(true);
+      mutated = true;
+    }
+
+    if (successCode) {
+      const message = describeOAuthSuccess(successCode);
+      setAuthNotice({ type: 'success', message });
+      setAuthError(null);
+      setIsAuthOpen(false);
+      mutated = true;
+    }
+
+    if (mutated) {
+      currentUrl.searchParams.delete('authError');
+      currentUrl.searchParams.delete('authSuccess');
+      window.history.replaceState(null, '', currentUrl.toString());
+    }
+  }, []);
 
   useEffect(() => {
     if (!hasHydrated || typeof window === 'undefined') {
@@ -151,6 +211,15 @@ export default function Home() {
       const data = await response.json().catch(() => null);
       throw new Error(data?.error ?? 'Login failed');
     }
+  };
+
+  const handleGoogleSignIn = () => {
+    setAuthError(null);
+    setAuthNotice(null);
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.location.href = '/api/auth/google';
   };
 
   const handleAuthSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -237,6 +306,17 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-6xl px-4 py-12">
+        {authNotice ? (
+          <div
+            className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${
+              authNotice.type === 'success'
+                ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
+                : 'border-red-400/40 bg-red-500/10 text-red-100'
+            }`}
+          >
+            {authNotice.message}
+          </div>
+        ) : null}
         <div className="rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 px-6 py-12 text-center shadow-2xl md:px-10">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-indigo-200">
@@ -562,6 +642,24 @@ export default function Home() {
                   <Dialog.Description className="mt-2 text-center text-sm text-slate-400">
                     Access your Supabase-backed translation notebook with a custom session token flow.
                   </Dialog.Description>
+
+                  <div className="mt-8 space-y-4">
+                    <button
+                      type="button"
+                      onClick={handleGoogleSignIn}
+                      className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-700 bg-slate-950/40 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-indigo-400 hover:bg-slate-950/60 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
+                    >
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-sm font-semibold text-[#4285F4]">
+                        G
+                      </span>
+                      Continue with Google
+                    </button>
+                    <div className="flex items-center gap-3 text-xs uppercase tracking-[0.3em] text-slate-500">
+                      <span className="h-px flex-1 bg-slate-800" />
+                      <span>Or continue with email</span>
+                      <span className="h-px flex-1 bg-slate-800" />
+                    </div>
+                  </div>
 
                   <Tab.Group
                     selectedIndex={authMode === 'login' ? 0 : 1}
