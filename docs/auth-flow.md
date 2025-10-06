@@ -1,52 +1,71 @@
-```
+```mermaid
 flowchart LR
-    subgraph Client [Browser]
-      A["Register Form Submit"]
-      B["Login Form Submit"]
-      C{"Send request with sb_session cookie?"}
-      D["Protected tRPC Call (e.g. notes.getAll)"]
-      E["Public tRPC Call (e.g. translate)"]
-    end
+  subgraph Client [Browser]
+    A[Register form submit]
+    B[Login form submit]
+    G[Continue with Google]
+    N[Redirected with authSuccess/authError]
+    C{Request includes sb_session cookie?}
+    D[Protected tRPC call]
+    E[Public tRPC call]
+  end
 
-    subgraph Server [Next.js]
-      R["POST /api/auth/register"]
-      L["POST /api/auth/login"]
-      H["tRPC Handler app/api/trpc/[trpc]/route.ts"]
-      P["protectedProcedure (lib/trpc.ts)"]
-      Pub["publicProcedure (lib/trpc.ts)"]
-    end
+  subgraph Server [Next.js]
+    R[POST /api/auth/register]
+    L[POST /api/auth/login]
+    GStart[GET /api/auth/google]
+    GCallback[GET /api/auth/google/callback]
+    H[tRPC handler app/api/trpc/...]
+    P[protectedProcedure (lib/trpc.ts)]
+    Pub[publicProcedure (lib/trpc.ts)]
+  end
 
-    subgraph Supabase [Postgres]
-      U[(users)]:::db
-      T[(sessions)]:::db
-    end
+  subgraph Supabase [Postgres]
+    U[(users)]
+    S[(sessions)]
+  end
 
-    classDef db fill:#eef,stroke:#66a,stroke-width:1px;
+  subgraph Google
+    GA[Accounts consent screen]
+    GT[OAuth token endpoint]
+    GU[Userinfo endpoint]
+  end
 
-    A --> R
-    R -->|hash password| U
-    R -->|201 id/email| A
+  classDef db fill:#eef,stroke:#66a,stroke-width:1px;
+  class U,S db;
 
-    A --> B
-    B --> L
-    L -->|verify credentials| U
-    L -->|insert session token| T
-    L -->|Set-Cookie sb_session| B
+  A --> R -->|hash password + insert| U
+  R -->|201 id/email| A
 
-    D -->|fetch /api/trpc| H
-    C -->|no| Pub
-    C -->|yes| P
+  B --> L -->|verify bcrypt hash| U
+  L -->|insert session| S
+  L -->|Set-Cookie sb_session| N
 
-    H -->|getSessionFromRequest| T
-    H -->|load user if session valid| U
-    H -->|ctx.session| Context
+  G --> GStart
+  GStart -->|set state + verifier cookies| G
+  GStart --> GA
+  GA -->|redirect with code+state| GCallback
+  GCallback -->|validate state + exchange code| GT
+  GCallback -->|fetch profile| GU
+  GCallback -->|upsert user| U
+  GCallback -->|create session| S
+  GCallback -->|Set-Cookie sb_session + redirect /?authSuccess=google| N
 
-    Context -->|null| Pub
-    Context -->|SessionWithUser| P
+  N --> C
+  C -->|yes| P
+  C -->|no| Pub
 
-    P -->|authorized| D
-    P -->|no session| X["TRPCError UNAUTHORIZED"]
-    Pub --> E
-    Pub -->|session optional| D
+  D -->|/api/trpc| H
+  E -->|/api/trpc| H
+
+  H -->|getSessionFromRequest| S
+  H -->|load user| U
+  H -->|ctx.session| Ctx[tRPC context]
+
+  Ctx -->|SessionWithUser| P
+  Ctx -->|null| Pub
+
+  P -->|authorized| D
+  P -->|no session| X[TRPCError UNAUTHORIZED]
+  Pub --> E
 ```
-
